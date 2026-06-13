@@ -5,6 +5,7 @@ import faiss
 import numpy as np
 from dotenv import load_dotenv
 import os
+import time
 from google import genai
 from chunker import chunk_repository
 from github_handler import clone_repo, delete_repo, get_repo_name
@@ -15,12 +16,19 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Gemini embedding function — no local model needed
 def get_embedding(text):
-    result = client.models.embed_content(
-        model="models/gemini-embedding-001",
-        contents=text
-    )
-    return result.embeddings[0].values
-
+    while True:
+        try:
+            result = client.models.embed_content(
+                model="models/gemini-embedding-001",
+                contents=text
+            )
+            return result.embeddings[0].values
+        except Exception as e:
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                print("Rate limit hit, waiting 30 seconds...")
+                time.sleep(30)
+            else:
+                raise e
 # FastAPI app
 app = FastAPI(title="Codebase Chat API")
 
