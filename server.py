@@ -84,7 +84,7 @@ def index_repo(request: IndexRequest):
 
     print(f"\nIndexing {request.repo_path}...")
     chunks = chunk_repository(request.repo_path)
-
+    chunks = chunks[:200]
     if not chunks:
         raise HTTPException(status_code=400, detail="No Python functions found in this path")
 
@@ -114,6 +114,8 @@ def index_github(request: GithubIndexRequest):
         repo_name = get_repo_name(request.github_url)
 
         chunks = chunk_repository(repo_path)
+        # Limit to 200 chunks for free tier API limits
+        chunks = chunks[:200]
 
         if not chunks:
             raise HTTPException(status_code=400, detail="No Python functions found in this repo")
