@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import os
 from google import genai
 from chunker import chunk_repository
+from github_handler import clone_repo, delete_repo, get_repo_name
 
 # Setup
 load_dotenv()
@@ -25,8 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory storage — holds the index and chunks
-# In production this would be a database
+# In-memory storage
 store = {
     "index": None,
     "chunks": []
@@ -35,7 +35,10 @@ store = {
 # ── Request/Response models ──────────────────────────────────────────────────
 
 class IndexRequest(BaseModel):
-    repo_path: str  # path to the folder to index
+    repo_path: str
+
+class GithubIndexRequest(BaseModel):
+    github_url: str
 
 class QueryRequest(BaseModel):
     question: str
@@ -71,21 +74,17 @@ def index_repo(request: IndexRequest):
     if not chunks:
         raise HTTPException(status_code=400, detail="No Python functions found in this path")
 
-    # Embed all chunks
     texts = [chunk["text"] for chunk in chunks]
     embeddings = embedder.encode(texts)
     embeddings = np.array(embeddings, dtype='float32')
 
-    # Build FAISS index
     dimension = embeddings.shape[1]
     index = faiss.IndexFlatL2(dimension)
     index.add(embeddings)
 
-    # Save to store
     store["index"] = index
     store["chunks"] = chunks
 
-    print(f"Indexed {len(chunks)} functions successfully")
     return {
         "status": "success",
         "total_chunks": len(chunks),
@@ -93,23 +92,56 @@ def index_repo(request: IndexRequest):
     }
 
 
+@app.post("/index-github")
+def index_github(request: GithubIndexRequest):
+    repo_path = None
+    try:
+        repo_path = clone_repo(request.github_url)
+        repo_name = get_repo_name(request.github_url)
+
+        chunks = chunk_repository(repo_path)
+
+        if not chunks:
+            raise HTTPException(status_code=400, detail="No Python functions found in this repo")
+
+        texts = [chunk["text"] for chunk in chunks]
+        embeddings = embedder.encode(texts, show_progress_bar=True)
+        embeddings = np.array(embeddings, dtype='float32')
+
+        dimension = embeddings.shape[1]
+        index = faiss.IndexFlatL2(dimension)
+        index.add(embeddings)
+
+        store["index"] = index
+        store["chunks"] = chunks
+
+        print(f"Indexed {len(chunks)} functions from {repo_name}")
+        return {
+            "status": "success",
+            "repo": repo_name,
+            "total_chunks": len(chunks),
+            "files_indexed": len(set(c["file"] for c in chunks))
+        }
+
+    finally:
+        if repo_path:
+            delete_repo(repo_path)
+
+
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest):
     if store["index"] is None:
         raise HTTPException(status_code=400, detail="No repo indexed yet. Call /index first.")
 
-    # Search FAISS
     q_embedding = np.array(embedder.encode([request.question]), dtype='float32')
     distances, indices = store["index"].search(q_embedding, k=3)
 
-    # Build context
     relevant_chunks = [store["chunks"][i] for i in indices[0]]
     context = ""
     for chunk in relevant_chunks:
         context += f"\n--- {chunk['file']} (lines {chunk['start_line']}-{chunk['end_line']}) ---\n"
         context += chunk["text"] + "\n"
 
-    # Ask Gemini
     prompt = f"""You are a code assistant helping a developer understand a codebase.
 Use ONLY the code snippets below to answer the question.
 Always mention which file and function your answer comes from.
@@ -126,7 +158,6 @@ Answer clearly and mention the exact file and function name."""
         contents=prompt
     )
 
-    # Build sources list
     sources = [
         ChunkSource(
             file=chunk["file"],
