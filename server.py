@@ -101,8 +101,8 @@ def index_github(request: GithubIndexRequest):
         if not chunks:
             raise HTTPException(status_code=400, detail="No Python functions found in this repo")
 
-        # Limit to 300 chunks
-        chunks = chunks[:300]
+        # Limit to 100 chunks
+        chunks = chunks[:100]
 
         texts = [chunk["text"] for chunk in chunks]
         embeddings = get_embeddings_batch(texts, request.api_key)
