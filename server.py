@@ -110,7 +110,7 @@ def index_repo(request: IndexRequest):
 def index_github(request: GithubIndexRequest):
     repo_path = None
     try:
-        repo_path = clone_repo(request.github_url)
+        repo_path = clone_repo(request.github_url.strip())
         repo_name = get_repo_name(request.github_url)
 
         chunks = chunk_repository(repo_path)
