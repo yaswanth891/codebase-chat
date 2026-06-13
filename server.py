@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import faiss
 import numpy as np
-from sentence_transformers import SentenceTransformer
 from dotenv import load_dotenv
 import os
 from google import genai
@@ -13,7 +12,14 @@ from github_handler import clone_repo, delete_repo, get_repo_name
 # Setup
 load_dotenv()
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
+# Gemini embedding function — no local model needed
+def get_embedding(text):
+    result = client.models.embed_content(
+        model="models/gemini-embedding-001",
+        contents=text
+    )
+    return result.embeddings[0].values
 
 # FastAPI app
 app = FastAPI(title="Codebase Chat API")
@@ -75,8 +81,8 @@ def index_repo(request: IndexRequest):
         raise HTTPException(status_code=400, detail="No Python functions found in this path")
 
     texts = [chunk["text"] for chunk in chunks]
-    embeddings = embedder.encode(texts)
-    embeddings = np.array(embeddings, dtype='float32')
+    print("Embedding chunks...")
+    embeddings = np.array([get_embedding(t) for t in texts], dtype='float32')
 
     dimension = embeddings.shape[1]
     index = faiss.IndexFlatL2(dimension)
@@ -105,8 +111,8 @@ def index_github(request: GithubIndexRequest):
             raise HTTPException(status_code=400, detail="No Python functions found in this repo")
 
         texts = [chunk["text"] for chunk in chunks]
-        embeddings = embedder.encode(texts, show_progress_bar=True)
-        embeddings = np.array(embeddings, dtype='float32')
+        print(f"Embedding {len(texts)} chunks...")
+        embeddings = np.array([get_embedding(t) for t in texts], dtype='float32')
 
         dimension = embeddings.shape[1]
         index = faiss.IndexFlatL2(dimension)
@@ -133,7 +139,7 @@ def query(request: QueryRequest):
     if store["index"] is None:
         raise HTTPException(status_code=400, detail="No repo indexed yet. Call /index first.")
 
-    q_embedding = np.array(embedder.encode([request.question]), dtype='float32')
+    q_embedding = np.array([get_embedding(request.question)], dtype='float32')
     distances, indices = store["index"].search(q_embedding, k=3)
 
     relevant_chunks = [store["chunks"][i] for i in indices[0]]
