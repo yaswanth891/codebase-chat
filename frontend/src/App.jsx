@@ -4,32 +4,32 @@ import axios from "axios"
 const API = "https://codebase-chat-itiz.onrender.com"
 
 export default function App() {
+  const [apiKey, setApiKey] = useState("")
   const [githubUrl, setGithubUrl] = useState("")
-  const [indexStatus, setIndexStatus] = useState(null) // null | "loading" | "success" | "error"
+  const [indexStatus, setIndexStatus] = useState(null)
   const [indexInfo, setIndexInfo] = useState(null)
   const [question, setQuestion] = useState("")
   const [messages, setMessages] = useState([])
   const [asking, setAsking] = useState(false)
 
-  // ── Index a GitHub repo ──────────────────────────────────────────────────
   async function handleIndex() {
-    if (!githubUrl.trim()) return
+    if (!githubUrl.trim() || !apiKey.trim()) return
     setIndexStatus("loading")
     setIndexInfo(null)
 
     try {
       const res = await axios.post(`${API}/index-github`, {
-        github_url: githubUrl
+        github_url: githubUrl,
+        api_key: apiKey
       })
       setIndexInfo(res.data)
       setIndexStatus("success")
-      setMessages([]) // clear old chat
+      setMessages([])
     } catch (err) {
       setIndexStatus("error")
     }
   }
 
-  // ── Ask a question ───────────────────────────────────────────────────────
   async function handleAsk() {
     if (!question.trim() || asking) return
 
@@ -39,7 +39,10 @@ export default function App() {
     setAsking(true)
 
     try {
-      const res = await axios.post(`${API}/query`, { question })
+      const res = await axios.post(`${API}/query`, {
+        question,
+        api_key: apiKey
+      })
       const botMessage = {
         role: "bot",
         text: res.data.answer,
@@ -57,7 +60,6 @@ export default function App() {
     }
   }
 
-  // ── Handle Enter key in chat input ───────────────────────────────────────
   function handleKeyDown(e) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
@@ -65,14 +67,26 @@ export default function App() {
     }
   }
 
-  // ── UI ───────────────────────────────────────────────────────────────────
   return (
     <div style={styles.container}>
-
-      {/* Header */}
       <div style={styles.header}>
         <h1 style={styles.title}>Codebase Chat</h1>
         <p style={styles.subtitle}>Ask anything about any GitHub repository</p>
+      </div>
+
+      {/* API Key Section */}
+      <div style={styles.card}>
+        <p style={styles.label}>Your Gemini API Key</p>
+        <input
+          style={styles.input}
+          placeholder="AIza..."
+          value={apiKey}
+          onChange={e => setApiKey(e.target.value)}
+          type="password"
+        />
+        <p style={styles.hint}>
+          Get a free key at <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" style={styles.link}>aistudio.google.com</a>. Your key is never stored on our servers.
+        </p>
       </div>
 
       {/* Index Section */}
@@ -87,22 +101,16 @@ export default function App() {
             disabled={indexStatus === "loading"}
           />
           <button
-            style={{
-              ...styles.button,
-              opacity: indexStatus === "loading" ? 0.6 : 1
-            }}
+            style={{ ...styles.button, opacity: indexStatus === "loading" ? 0.6 : 1 }}
             onClick={handleIndex}
-            disabled={indexStatus === "loading"}
+            disabled={indexStatus === "loading" || !apiKey.trim()}
           >
             {indexStatus === "loading" ? "Indexing..." : "Index Repo"}
           </button>
         </div>
 
-        {/* Status messages */}
         {indexStatus === "loading" && (
-          <p style={styles.statusBlue}>
-            Cloning and indexing repository — this takes 1-2 minutes...
-          </p>
+          <p style={styles.statusBlue}>Cloning and indexing — this takes 1-2 minutes...</p>
         )}
         {indexStatus === "success" && indexInfo && (
           <p style={styles.statusGreen}>
@@ -110,21 +118,17 @@ export default function App() {
           </p>
         )}
         {indexStatus === "error" && (
-          <p style={styles.statusRed}>
-            Failed to index. Make sure it's a public GitHub URL.
-          </p>
+          <p style={styles.statusRed}>Failed to index. Check your API key and GitHub URL.</p>
         )}
       </div>
 
-      {/* Chat Section — only show after indexing */}
+      {/* Chat Section */}
       {indexStatus === "success" && (
         <div style={styles.card}>
-
-          {/* Messages */}
           <div style={styles.messages}>
             {messages.length === 0 && (
               <p style={styles.emptyChat}>
-                Ask anything about the codebase — "How does routing work?", "What does X function do?"
+                Ask anything — "How does routing work?", "What does X function do?"
               </p>
             )}
             {messages.map((msg, i) => (
@@ -148,7 +152,6 @@ export default function App() {
             )}
           </div>
 
-          {/* Input */}
           <div style={styles.row}>
             <input
               style={styles.input}
@@ -172,7 +175,6 @@ export default function App() {
   )
 }
 
-// ── Styles ───────────────────────────────────────────────────────────────────
 const styles = {
   container: {
     maxWidth: "800px",
@@ -182,20 +184,9 @@ const styles = {
     backgroundColor: "#f9fafb",
     minHeight: "100vh",
   },
-  header: {
-    marginBottom: "32px",
-  },
-  title: {
-    fontSize: "28px",
-    fontWeight: "700",
-    color: "#111827",
-    margin: "0 0 8px",
-  },
-  subtitle: {
-    fontSize: "15px",
-    color: "#6b7280",
-    margin: 0,
-  },
+  header: { marginBottom: "32px" },
+  title: { fontSize: "28px", fontWeight: "700", color: "#111827", margin: "0 0 8px" },
+  subtitle: { fontSize: "15px", color: "#6b7280", margin: 0 },
   card: {
     backgroundColor: "#ffffff",
     border: "1px solid #e5e7eb",
@@ -203,16 +194,10 @@ const styles = {
     padding: "24px",
     marginBottom: "20px",
   },
-  label: {
-    fontSize: "13px",
-    fontWeight: "500",
-    color: "#374151",
-    marginBottom: "8px",
-  },
-  row: {
-    display: "flex",
-    gap: "10px",
-  },
+  label: { fontSize: "13px", fontWeight: "500", color: "#374151", marginBottom: "8px" },
+  hint: { fontSize: "12px", color: "#9ca3af", marginTop: "8px" },
+  link: { color: "#1d4ed8" },
+  row: { display: "flex", gap: "10px" },
   input: {
     flex: 1,
     padding: "10px 14px",
@@ -232,33 +217,11 @@ const styles = {
     borderRadius: "8px",
     cursor: "pointer",
   },
-  statusBlue: {
-    fontSize: "13px",
-    color: "#1d4ed8",
-    marginTop: "10px",
-  },
-  statusGreen: {
-    fontSize: "13px",
-    color: "#15803d",
-    marginTop: "10px",
-  },
-  statusRed: {
-    fontSize: "13px",
-    color: "#dc2626",
-    marginTop: "10px",
-  },
-  messages: {
-    minHeight: "200px",
-    maxHeight: "400px",
-    overflowY: "auto",
-    marginBottom: "16px",
-  },
-  emptyChat: {
-    fontSize: "13px",
-    color: "#9ca3af",
-    textAlign: "center",
-    marginTop: "80px",
-  },
+  statusBlue: { fontSize: "13px", color: "#1d4ed8", marginTop: "10px" },
+  statusGreen: { fontSize: "13px", color: "#15803d", marginTop: "10px" },
+  statusRed: { fontSize: "13px", color: "#dc2626", marginTop: "10px" },
+  messages: { minHeight: "200px", maxHeight: "400px", overflowY: "auto", marginBottom: "16px" },
+  emptyChat: { fontSize: "13px", color: "#9ca3af", textAlign: "center", marginTop: "80px" },
   userMsg: {
     backgroundColor: "#111827",
     color: "#ffffff",
@@ -274,19 +237,8 @@ const styles = {
     marginBottom: "12px",
     marginRight: "60px",
   },
-  msgText: {
-    fontSize: "14px",
-    lineHeight: "1.6",
-    margin: "0 0 8px",
-    color: "inherit",
-    whiteSpace: "pre-wrap",
-  },
-  sources: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "6px",
-    marginTop: "8px",
-  },
+  msgText: { fontSize: "14px", lineHeight: "1.6", margin: "0 0 8px", color: "inherit", whiteSpace: "pre-wrap" },
+  sources: { display: "flex", flexWrap: "wrap", gap: "6px", marginTop: "8px" },
   sourceChip: {
     fontSize: "11px",
     backgroundColor: "#e5e7eb",

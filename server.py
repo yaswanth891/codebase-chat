@@ -10,12 +10,27 @@ from google import genai
 from chunker import chunk_repository
 from github_handler import clone_repo, delete_repo, get_repo_name
 
-# Setup
 load_dotenv()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-# Gemini embedding function — no local model needed
-def get_embedding(text):
+app = FastAPI(title="Codebase Chat API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# In-memory storage per API key
+stores = {}
+
+def get_store(api_key: str):
+    if api_key not in stores:
+        stores[api_key] = {"index": None, "chunks": []}
+    return stores[api_key]
+
+def get_embedding(text: str, api_key: str):
+    client = genai.Client(api_key=api_key)
     while True:
         try:
             result = client.models.embed_content(
@@ -29,33 +44,34 @@ def get_embedding(text):
                 time.sleep(30)
             else:
                 raise e
-# FastAPI app
-app = FastAPI(title="Codebase Chat API")
 
-# Allow React frontend to talk to this server
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# In-memory storage
-store = {
-    "index": None,
-    "chunks": []
-}
+def get_embeddings_batch(texts: list, api_key: str):
+    """Embed texts in batches of 50 to stay within rate limits."""
+    all_embeddings = []
+    batch_size = 50
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i+batch_size]
+        print(f"Embedding batch {i//batch_size + 1} of {(len(texts)-1)//batch_size + 1}...")
+        for text in batch:
+            embedding = get_embedding(text, api_key)
+            all_embeddings.append(embedding)
+        if i + batch_size < len(texts):
+            time.sleep(2)
+    return all_embeddings
 
 # ── Request/Response models ──────────────────────────────────────────────────
 
 class IndexRequest(BaseModel):
     repo_path: str
+    api_key: str
 
 class GithubIndexRequest(BaseModel):
     github_url: str
+    api_key: str
 
 class QueryRequest(BaseModel):
     question: str
+    api_key: str
 
 class ChunkSource(BaseModel):
     file: str
@@ -70,40 +86,7 @@ class QueryResponse(BaseModel):
 
 @app.get("/health")
 def health():
-    return {
-        "status": "running",
-        "indexed": store["index"] is not None,
-        "total_chunks": len(store["chunks"])
-    }
-
-
-@app.post("/index")
-def index_repo(request: IndexRequest):
-    if not os.path.exists(request.repo_path):
-        raise HTTPException(status_code=404, detail=f"Path not found: {request.repo_path}")
-
-    print(f"\nIndexing {request.repo_path}...")
-    chunks = chunk_repository(request.repo_path)
-    chunks = chunks[:200]
-    if not chunks:
-        raise HTTPException(status_code=400, detail="No Python functions found in this path")
-
-    texts = [chunk["text"] for chunk in chunks]
-    print("Embedding chunks...")
-    embeddings = np.array([get_embedding(t) for t in texts], dtype='float32')
-
-    dimension = embeddings.shape[1]
-    index = faiss.IndexFlatL2(dimension)
-    index.add(embeddings)
-
-    store["index"] = index
-    store["chunks"] = chunks
-
-    return {
-        "status": "success",
-        "total_chunks": len(chunks),
-        "files_indexed": len(set(c["file"] for c in chunks))
-    }
+    return {"status": "running"}
 
 
 @app.post("/index-github")
@@ -114,20 +97,22 @@ def index_github(request: GithubIndexRequest):
         repo_name = get_repo_name(request.github_url)
 
         chunks = chunk_repository(repo_path)
-        # Limit to 200 chunks for free tier API limits
-        chunks = chunks[:200]
 
         if not chunks:
             raise HTTPException(status_code=400, detail="No Python functions found in this repo")
 
+        # Limit to 300 chunks
+        chunks = chunks[:300]
+
         texts = [chunk["text"] for chunk in chunks]
-        print(f"Embedding {len(texts)} chunks...")
-        embeddings = np.array([get_embedding(t) for t in texts], dtype='float32')
+        embeddings = get_embeddings_batch(texts, request.api_key)
+        embeddings = np.array(embeddings, dtype='float32')
 
         dimension = embeddings.shape[1]
         index = faiss.IndexFlatL2(dimension)
         index.add(embeddings)
 
+        store = get_store(request.api_key)
         store["index"] = index
         store["chunks"] = chunks
 
@@ -146,10 +131,14 @@ def index_github(request: GithubIndexRequest):
 
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest):
-    if store["index"] is None:
-        raise HTTPException(status_code=400, detail="No repo indexed yet. Call /index first.")
+    store = get_store(request.api_key)
 
-    q_embedding = np.array([get_embedding(request.question)], dtype='float32')
+    if store["index"] is None:
+        raise HTTPException(status_code=400, detail="No repo indexed yet. Call /index-github first.")
+
+    client = genai.Client(api_key=request.api_key)
+
+    q_embedding = np.array([get_embedding(request.question, request.api_key)], dtype='float32')
     distances, indices = store["index"].search(q_embedding, k=3)
 
     relevant_chunks = [store["chunks"][i] for i in indices[0]]
