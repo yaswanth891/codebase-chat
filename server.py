@@ -21,8 +21,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory storage per API key
+# In-memory storage for the currently indexed repo
 stores = {}
+STORE_ID = "default"
 
 TRANSIENT_GEMINI_ERRORS = (
     "429",
@@ -31,10 +32,20 @@ TRANSIENT_GEMINI_ERRORS = (
     "UNAVAILABLE",
 )
 
-def get_store(api_key: str):
-    if api_key not in stores:
-        stores[api_key] = {"index": None, "chunks": []}
-    return stores[api_key]
+def get_api_key() -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="Server is missing GEMINI_API_KEY."
+        )
+    return api_key
+
+
+def get_store():
+    if STORE_ID not in stores:
+        stores[STORE_ID] = {"index": None, "chunks": []}
+    return stores[STORE_ID]
 
 
 def is_transient_gemini_error(error: Exception) -> bool:
@@ -95,17 +106,11 @@ def get_embeddings_batch(texts: list, api_key: str):
 
 # ── Request/Response models ──────────────────────────────────────────────────
 
-class IndexRequest(BaseModel):
-    repo_path: str
-    api_key: str
-
 class GithubIndexRequest(BaseModel):
     github_url: str
-    api_key: str
 
 class QueryRequest(BaseModel):
     question: str
-    api_key: str
 
 class ChunkSource(BaseModel):
     file: str
@@ -127,6 +132,7 @@ def health():
 def index_github(request: GithubIndexRequest):
     repo_path = None
     try:
+        api_key = get_api_key()
         repo_path = clone_repo(request.github_url.strip())
         repo_name = get_repo_name(request.github_url)
 
@@ -139,14 +145,14 @@ def index_github(request: GithubIndexRequest):
         chunks = chunks[:100]
 
         texts = [chunk["text"] for chunk in chunks]
-        embeddings = get_embeddings_batch(texts, request.api_key)
+        embeddings = get_embeddings_batch(texts, api_key)
         embeddings = np.array(embeddings, dtype='float32')
 
         dimension = embeddings.shape[1]
         index = faiss.IndexFlatL2(dimension)
         index.add(embeddings)
 
-        store = get_store(request.api_key)
+        store = get_store()
         store["index"] = index
         store["chunks"] = chunks
 
@@ -168,15 +174,16 @@ def index_github(request: GithubIndexRequest):
 
 @app.post("/query", response_model=QueryResponse)
 def query(request: QueryRequest):
-    store = get_store(request.api_key)
+    api_key = get_api_key()
+    store = get_store()
 
     if store["index"] is None:
         raise HTTPException(status_code=400, detail="No repo indexed yet. Call /index-github first.")
 
-    client = genai.Client(api_key=request.api_key)
+    client = genai.Client(api_key=api_key)
 
     try:
-        q_embedding = np.array([get_embedding(request.question, request.api_key)], dtype='float32')
+        q_embedding = np.array([get_embedding(request.question, api_key)], dtype='float32')
     except Exception as e:
         raise_http_error(e)
 

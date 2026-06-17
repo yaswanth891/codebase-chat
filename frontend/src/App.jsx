@@ -4,7 +4,6 @@ import axios from "axios"
 const API = import.meta.env.VITE_API_URL || "https://codebase-chat-itiz.onrender.com"
 
 export default function App() {
-  const [apiKey, setApiKey] = useState("")
   const [githubUrl, setGithubUrl] = useState("")
   const [indexStatus, setIndexStatus] = useState(null)
   const [indexInfo, setIndexInfo] = useState(null)
@@ -13,13 +12,12 @@ export default function App() {
   const [asking, setAsking] = useState(false)
 
   async function handleIndex() {
-    if (!githubUrl.trim() || !apiKey.trim()) return
+    if (!githubUrl.trim()) return
     setIndexStatus("loading")
     setIndexInfo(null)
     try {
       const res = await axios.post(`${API}/index-github`, {
-        github_url: githubUrl,
-        api_key: apiKey
+        github_url: githubUrl
       })
       setIndexInfo(res.data)
       setIndexStatus("success")
@@ -38,8 +36,7 @@ export default function App() {
     setAsking(true)
     try {
       const res = await axios.post(`${API}/query`, {
-        question: q,
-        api_key: apiKey
+        question: q
       })
       setMessages(prev => [...prev, {
         role: "bot",
@@ -91,27 +88,6 @@ export default function App() {
           <p style={s.sub}>Paste a GitHub URL, ask questions in plain English, get answers with exact file and line references.</p>
         </div>
 
-        {/* API Key */}
-        <div style={s.card}>
-          <div style={s.label}>Gemini API key</div>
-          <div style={s.inputWrap}>
-            <span style={s.inputIcon}>⌘</span>
-            <input
-              style={s.input}
-              type="password"
-              placeholder="AIza..."
-              value={apiKey}
-              onChange={e => setApiKey(e.target.value)}
-            />
-          </div>
-          <p style={s.hint}>
-            Your key is used directly — never stored on our servers.{" "}
-            <a href="https://aistudio.google.com" target="_blank" rel="noreferrer" style={s.link}>
-              Get one free →
-            </a>
-          </p>
-        </div>
-
         {/* Index */}
         <div style={s.card}>
           <div style={s.label}>Repository</div>
@@ -128,9 +104,9 @@ export default function App() {
               />
             </div>
             <button
-              style={{ ...s.btn, opacity: (indexStatus === "loading" || !apiKey.trim()) ? 0.5 : 1 }}
+              style={{ ...s.btn, opacity: (indexStatus === "loading" || !githubUrl.trim()) ? 0.5 : 1 }}
               onClick={handleIndex}
-              disabled={indexStatus === "loading" || !apiKey.trim()}
+              disabled={indexStatus === "loading" || !githubUrl.trim()}
             >
               {indexStatus === "loading" ? "Indexing..." : "Index repo"}
             </button>
@@ -146,7 +122,7 @@ export default function App() {
           )}
           {indexStatus === "error" && (
             <p style={{ ...s.statusText, color: "#dc2626" }}>
-              Could not index. Check your API key and make sure the repo is public.
+              Could not index. Make sure the repo is public and try again.
             </p>
           )}
         </div>
