@@ -24,26 +24,60 @@ app.add_middleware(
 # In-memory storage per API key
 stores = {}
 
+TRANSIENT_GEMINI_ERRORS = (
+    "429",
+    "503",
+    "RESOURCE_EXHAUSTED",
+    "UNAVAILABLE",
+)
+
 def get_store(api_key: str):
     if api_key not in stores:
         stores[api_key] = {"index": None, "chunks": []}
     return stores[api_key]
 
+
+def is_transient_gemini_error(error: Exception) -> bool:
+    message = str(error)
+    return any(code in message for code in TRANSIENT_GEMINI_ERRORS)
+
+
+def retry_gemini_call(operation, description: str, max_attempts: int = 5):
+    delay = 5
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return operation()
+        except Exception as e:
+            if not is_transient_gemini_error(e) or attempt == max_attempts:
+                raise e
+
+            print(
+                f"Temporary Gemini error during {description}; "
+                f"retrying in {delay}s (attempt {attempt}/{max_attempts})"
+            )
+            time.sleep(delay)
+            delay = min(delay * 2, 30)
+
+
+def raise_http_error(error: Exception):
+    if is_transient_gemini_error(error):
+        raise HTTPException(
+            status_code=503,
+            detail="Gemini is temporarily unavailable or rate limited. Please try again in a minute."
+        )
+    raise error
+
+
 def get_embedding(text: str, api_key: str):
     client = genai.Client(api_key=api_key)
-    while True:
-        try:
-            result = client.models.embed_content(
-                model="models/gemini-embedding-001",
-                contents=text
-            )
-            return result.embeddings[0].values
-        except Exception as e:
-            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                print("Rate limit hit, waiting 30 seconds...")
-                time.sleep(30)
-            else:
-                raise e
+    result = retry_gemini_call(
+        lambda: client.models.embed_content(
+            model="models/gemini-embedding-001",
+            contents=text
+        ),
+        "embedding"
+    )
+    return result.embeddings[0].values
 
 def get_embeddings_batch(texts: list, api_key: str):
     """Embed texts in batches of 50 to stay within rate limits."""
@@ -124,6 +158,9 @@ def index_github(request: GithubIndexRequest):
             "files_indexed": len(set(c["file"] for c in chunks))
         }
 
+    except Exception as e:
+        raise_http_error(e)
+
     finally:
         if repo_path:
             delete_repo(repo_path)
@@ -138,7 +175,11 @@ def query(request: QueryRequest):
 
     client = genai.Client(api_key=request.api_key)
 
-    q_embedding = np.array([get_embedding(request.question, request.api_key)], dtype='float32')
+    try:
+        q_embedding = np.array([get_embedding(request.question, request.api_key)], dtype='float32')
+    except Exception as e:
+        raise_http_error(e)
+
     distances, indices = store["index"].search(q_embedding, k=3)
 
     relevant_chunks = [store["chunks"][i] for i in indices[0]]
@@ -158,10 +199,16 @@ Question: {request.question}
 
 Answer clearly and mention the exact file and function name."""
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
-    )
+    try:
+        response = retry_gemini_call(
+            lambda: client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
+            ),
+            "answer generation"
+        )
+    except Exception as e:
+        raise_http_error(e)
 
     sources = [
         ChunkSource(
