@@ -6,7 +6,7 @@ def chunk_python_file(filepath):
     Reads a .py file and splits it into chunks — one chunk per function.
     Returns a list of dicts with the chunk text and metadata.
     """
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
         source_code = f.read()
 
     chunks = []

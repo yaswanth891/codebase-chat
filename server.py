@@ -32,6 +32,13 @@ TRANSIENT_GEMINI_ERRORS = (
     "UNAVAILABLE",
 )
 
+AUTH_GEMINI_ERRORS = (
+    "401",
+    "UNAUTHENTICATED",
+    "ACCESS_TOKEN_TYPE_UNSUPPORTED",
+    "API_KEY_INVALID",
+)
+
 def get_api_key() -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -53,6 +60,11 @@ def is_transient_gemini_error(error: Exception) -> bool:
     return any(code in message for code in TRANSIENT_GEMINI_ERRORS)
 
 
+def is_auth_gemini_error(error: Exception) -> bool:
+    message = str(error)
+    return any(code in message for code in AUTH_GEMINI_ERRORS)
+
+
 def retry_gemini_call(operation, description: str, max_attempts: int = 5):
     delay = 5
     for attempt in range(1, max_attempts + 1):
@@ -71,6 +83,11 @@ def retry_gemini_call(operation, description: str, max_attempts: int = 5):
 
 
 def raise_http_error(error: Exception):
+    if is_auth_gemini_error(error):
+        raise HTTPException(
+            status_code=401,
+            detail="The server GEMINI_API_KEY is invalid. Use an API key from Google AI Studio, not an OAuth token."
+        )
     if is_transient_gemini_error(error):
         raise HTTPException(
             status_code=503,
@@ -94,12 +111,19 @@ def get_embeddings_batch(texts: list, api_key: str):
     """Embed texts in batches of 50 to stay within rate limits."""
     all_embeddings = []
     batch_size = 50
+    client = genai.Client(api_key=api_key)
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i+batch_size]
         print(f"Embedding batch {i//batch_size + 1} of {(len(texts)-1)//batch_size + 1}...")
-        for text in batch:
-            embedding = get_embedding(text, api_key)
-            all_embeddings.append(embedding)
+        result = retry_gemini_call(
+            lambda: client.models.embed_content(
+                model="models/gemini-embedding-001",
+                contents=batch
+            ),
+            "batch embedding"
+        )
+        for embedding in result.embeddings:
+            all_embeddings.append(embedding.values)
         if i + batch_size < len(texts):
             time.sleep(2)
     return all_embeddings
