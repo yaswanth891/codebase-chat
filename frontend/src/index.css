@@ -219,6 +219,7 @@ body {
   border-radius: 10px;
   cursor: pointer;
   white-space: nowrap;
+  flex-shrink: 0;
   transition: all 0.3s ease;
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
 }
@@ -528,3 +529,21 @@ body {
     transform: scale(1) translateY(0);
   }
 }
+
+@media (max-width: 480px) {
+  .flex-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .btn-primary {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+  }
+  
+  .custom-input {
+    width: 100%;
+  }
+}
+

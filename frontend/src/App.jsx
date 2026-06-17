@@ -124,8 +124,8 @@ export default function App() {
           </svg>
         </div>
         <span className="logo-name">Codebase Chat</span>
-        <span className="logo-badge">beta</span>
       </div>
+
 
       {/* Hero Intro */}
       <div className="hero">
