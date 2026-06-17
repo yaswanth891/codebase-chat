@@ -83,6 +83,8 @@ def retry_gemini_call(operation, description: str, max_attempts: int = 5):
 
 
 def raise_http_error(error: Exception):
+    if isinstance(error, HTTPException):
+        raise error
     if is_auth_gemini_error(error):
         raise HTTPException(
             status_code=401,
@@ -93,7 +95,15 @@ def raise_http_error(error: Exception):
             status_code=503,
             detail="Gemini is temporarily unavailable or rate limited. Please try again in a minute."
         )
-    raise error
+    if "Failed to clone repo" in str(error):
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to clone repository. Please make sure you provided a valid, public GitHub repository URL (e.g., https://github.com/username/repository) and not a deployed website URL."
+        )
+    raise HTTPException(
+        status_code=500,
+        detail=f"Internal Server Error: {str(error)}"
+    )
 
 
 def get_embedding(text: str, api_key: str):
