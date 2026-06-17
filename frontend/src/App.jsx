@@ -1,7 +1,7 @@
 import { useState } from "react"
 import axios from "axios"
 
-const API = "https://codebase-chat-itiz.onrender.com"
+const API = import.meta.env.VITE_API_URL || "https://codebase-chat-itiz.onrender.com"
 
 export default function App() {
   const [apiKey, setApiKey] = useState("")
