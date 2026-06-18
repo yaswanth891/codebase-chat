@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import faiss
@@ -6,9 +6,24 @@ import numpy as np
 from dotenv import load_dotenv
 import os
 import time
+import hashlib
+import json
+import urllib.request
+import uuid
 from google import genai
 from chunker import chunk_repository
 from github_handler import clone_repo, delete_repo, get_repo_name
+from database import (
+    init_db,
+    get_or_create_user,
+    create_session,
+    get_user_sessions,
+    get_session,
+    delete_session,
+    update_session_repo,
+    add_message,
+    get_session_messages,
+)
 
 load_dotenv()
 
@@ -21,9 +36,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory storage for the currently indexed repo
+# In-memory storage for active FAISS stores (mapped by repo_url)
 stores = {}
-STORE_ID = "default"
+
+INDEX_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "indexes")
 
 TRANSIENT_GEMINI_ERRORS = (
     "429",
@@ -39,6 +55,11 @@ AUTH_GEMINI_ERRORS = (
     "API_KEY_INVALID",
 )
 
+# Initialize database on startup
+@app.on_event("startup")
+def startup_event():
+    init_db()
+
 def get_api_key() -> str:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
@@ -47,12 +68,6 @@ def get_api_key() -> str:
             detail="Server is missing GEMINI_API_KEY."
         )
     return api_key
-
-
-def get_store():
-    if STORE_ID not in stores:
-        stores[STORE_ID] = {"index": None, "chunks": []}
-    return stores[STORE_ID]
 
 
 def is_transient_gemini_error(error: Exception) -> bool:
@@ -138,10 +153,102 @@ def get_embeddings_batch(texts: list, api_key: str):
             time.sleep(2)
     return all_embeddings
 
+# ── Index caching helper functions ──────────────────────────────────────────
+
+def get_repo_hash(repo_url: str) -> str:
+    return hashlib.sha256(repo_url.strip().encode("utf-8")).hexdigest()
+
+def get_cached_index(repo_url: str):
+    """Get index from memory or load it from disk if cached."""
+    repo_url_clean = repo_url.strip()
+    if repo_url_clean in stores:
+        return stores[repo_url_clean]
+    
+    # Check disk cache
+    repo_hash = get_repo_hash(repo_url_clean)
+    repo_dir = os.path.join(INDEX_DIR, repo_hash)
+    index_file = os.path.join(repo_dir, "index.faiss")
+    chunks_file = os.path.join(repo_dir, "chunks.json")
+    
+    if os.path.exists(index_file) and os.path.exists(chunks_file):
+        try:
+            print(f"Loading cached index for {repo_url_clean} from disk...")
+            index = faiss.read_index(index_file)
+            with open(chunks_file, "r", encoding="utf-8") as f:
+                chunks = json.load(f)
+            
+            stores[repo_url_clean] = {"index": index, "chunks": chunks}
+            return stores[repo_url_clean]
+        except Exception as e:
+            print(f"Failed to load cached index from disk: {e}")
+            
+    return None
+
+def save_index_to_disk(repo_url: str, index, chunks):
+    """Save index and chunks to disk cache."""
+    repo_url_clean = repo_url.strip()
+    repo_hash = get_repo_hash(repo_url_clean)
+    repo_dir = os.path.join(INDEX_DIR, repo_hash)
+    os.makedirs(repo_dir, exist_ok=True)
+    
+    index_file = os.path.join(repo_dir, "index.faiss")
+    chunks_file = os.path.join(repo_dir, "chunks.json")
+    
+    faiss.write_index(index, index_file)
+    with open(chunks_file, "w", encoding="utf-8") as f:
+        json.dump(chunks, f, indent=2)
+    
+    print(f"Saved index for {repo_url_clean} to disk at {repo_dir}")
+
+# ── User authentication helpers ──────────────────────────────────────────────
+
+def verify_google_token(token: str) -> dict:
+    url = f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "FastAPI-Server"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            if "email" in data:
+                return {
+                    "email": data.get("email"),
+                    "name": data.get("name"),
+                    "picture": data.get("picture"),
+                }
+    except Exception as e:
+        print(f"Token verification error: {e}")
+    return None
+
+def get_current_user(authorization: str = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    
+    token = authorization.split(" ")[1]
+    if token.startswith("demo:"):
+        email = token.split("demo:")[1]
+        if not email or "@" not in email:
+            raise HTTPException(status_code=401, detail="Invalid demo token")
+        name = email.split("@")[0].capitalize()
+        user = get_or_create_user(email, name=name)
+        return user
+    else:
+        user_info = verify_google_token(token)
+        if not user_info:
+            raise HTTPException(status_code=401, detail="Invalid Google OAuth token")
+        user = get_or_create_user(user_info["email"], name=user_info.get("name"), picture=user_info.get("picture"))
+        return user
+
 # ── Request/Response models ──────────────────────────────────────────────────
+
+class AuthRequest(BaseModel):
+    token: str
 
 class GithubIndexRequest(BaseModel):
     github_url: str
+
+class CreateSessionRequest(BaseModel):
+    repo_url: str = None
+    repo_name: str = None
+    title: str = None
 
 class QueryRequest(BaseModel):
     question: str
@@ -161,15 +268,76 @@ class QueryResponse(BaseModel):
 def health():
     return {"status": "running"}
 
+@app.post("/auth/login")
+def auth_login(req: AuthRequest):
+    token = req.token
+    if token.startswith("demo:"):
+        email = token.split("demo:")[1]
+        if not email or "@" not in email:
+            raise HTTPException(status_code=400, detail="Invalid email address")
+        name = email.split("@")[0].capitalize()
+        user = get_or_create_user(email, name=name)
+        return {"status": "success", "user": user, "token": token}
+    else:
+        user_info = verify_google_token(token)
+        if not user_info:
+            raise HTTPException(status_code=401, detail="Invalid Google OAuth token")
+        user = get_or_create_user(user_info["email"], name=user_info.get("name"), picture=user_info.get("picture"))
+        return {"status": "success", "user": user, "token": token}
 
-@app.post("/index-github")
-def index_github(request: GithubIndexRequest):
+@app.get("/sessions")
+def list_sessions(user: dict = Depends(get_current_user)):
+    return get_user_sessions(user["id"])
+
+@app.post("/sessions")
+def api_create_session(req: CreateSessionRequest, user: dict = Depends(get_current_user)):
+    session_id = str(uuid.uuid4())
+    title = req.title or (f"Chat on {req.repo_name}" if req.repo_name else "New Chat")
+    session = create_session(session_id, user["id"], req.repo_url, req.repo_name, title)
+    return session
+
+@app.delete("/sessions/{session_id}")
+def api_delete_session(session_id: str, user: dict = Depends(get_current_user)):
+    session = get_session(session_id)
+    if not session or session["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Session not found")
+    delete_session(session_id)
+    return {"status": "success"}
+
+@app.get("/sessions/{session_id}/messages")
+def api_session_messages(session_id: str, user: dict = Depends(get_current_user)):
+    session = get_session(session_id)
+    if not session or session["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Session not found")
+    messages = get_session_messages(session_id)
+    return messages
+
+@app.post("/sessions/{session_id}/index")
+def index_session_repo(session_id: str, request: GithubIndexRequest, user: dict = Depends(get_current_user)):
+    session = get_session(session_id)
+    if not session or session["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
     repo_path = None
     try:
         api_key = get_api_key()
-        repo_path = clone_repo(request.github_url.strip())
-        repo_name = get_repo_name(request.github_url)
-
+        github_url = request.github_url.strip()
+        repo_name = get_repo_name(github_url)
+        
+        # Check if already cached (memory or disk)
+        cached = get_cached_index(github_url)
+        if cached:
+            # Update session in DB
+            title = f"Chat on {repo_name}"
+            update_session_repo(session_id, github_url, repo_name, title=title)
+            return {
+                "status": "success",
+                "repo": repo_name,
+                "total_chunks": len(cached["chunks"]),
+                "files_indexed": len(set(c["file"] for c in cached["chunks"]))
+            }
+            
+        repo_path = clone_repo(github_url)
         chunks = chunk_repository(repo_path)
 
         if not chunks:
@@ -186,9 +354,13 @@ def index_github(request: GithubIndexRequest):
         index = faiss.IndexFlatL2(dimension)
         index.add(embeddings)
 
-        store = get_store()
-        store["index"] = index
-        store["chunks"] = chunks
+        # Save to disk cache and memory
+        save_index_to_disk(github_url, index, chunks)
+        stores[github_url] = {"index": index, "chunks": chunks}
+
+        # Update session info
+        title = f"Chat on {repo_name}"
+        update_session_repo(session_id, github_url, repo_name, title=title)
 
         print(f"Indexed {len(chunks)} functions from {repo_name}")
         return {
@@ -205,15 +377,25 @@ def index_github(request: GithubIndexRequest):
         if repo_path:
             delete_repo(repo_path)
 
-
-@app.post("/query", response_model=QueryResponse)
-def query(request: QueryRequest):
+@app.post("/sessions/{session_id}/query", response_model=QueryResponse)
+def api_query_session(session_id: str, request: QueryRequest, user: dict = Depends(get_current_user)):
+    session = get_session(session_id)
+    if not session or session["user_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    repo_url = session["repo_url"]
+    if not repo_url:
+        raise HTTPException(status_code=400, detail="No repository indexed for this session. Please index a GitHub repository first.")
+        
+    # Get index from cache (disk or memory)
+    store = get_cached_index(repo_url)
+    if not store or store["index"] is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Repository index not found. Please re-index the repository: {repo_url}"
+        )
+        
     api_key = get_api_key()
-    store = get_store()
-
-    if store["index"] is None:
-        raise HTTPException(status_code=400, detail="No repo indexed yet. Call /index-github first.")
-
     client = genai.Client(api_key=api_key)
 
     try:
@@ -259,5 +441,9 @@ Answer clearly and mention the exact file and function name."""
         )
         for chunk in relevant_chunks
     ]
+
+    # Save user message and bot response to database
+    add_message(session_id, "user", request.question)
+    add_message(session_id, "bot", response.text, [dict(s) for s in sources])
 
     return QueryResponse(answer=response.text, sources=sources)

@@ -44,8 +44,8 @@ body {
 
 /* Scrollbars */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: rgba(0, 0, 0, 0.2);
@@ -64,6 +64,266 @@ body {
   width: 100%;
   margin: 0 auto;
   padding: 40px 20px 80px;
+}
+
+/* App Layout for 2-Pane View */
+.app-layout {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-gradient);
+}
+
+/* Sidebar Styles */
+.sidebar {
+  width: 280px;
+  background: rgba(10, 14, 23, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-right: 1px solid var(--border-card);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 20px;
+  flex-shrink: 0;
+  z-index: 10;
+  transition: all 0.3s ease;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  animation: fadeInDown 0.5s ease;
+}
+
+.sidebar-new-chat-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  background: var(--accent-light);
+  border: 1px dashed rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 20px;
+  transition: all 0.2s ease;
+}
+
+.sidebar-new-chat-btn:hover {
+  background: rgba(99, 102, 241, 0.25);
+  border-color: var(--accent-color);
+  color: #ffffff;
+}
+
+.sidebar-sessions {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 20px;
+  padding-right: 4px;
+}
+
+.sidebar-session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 14px;
+  transition: all 0.2s ease;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+}
+
+.sidebar-session-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+
+.sidebar-session-item.active {
+  background: var(--accent-light);
+  color: #ffffff;
+  border-color: rgba(99, 102, 241, 0.2);
+  border-left: 3px solid var(--accent-color);
+}
+
+.sidebar-session-title {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-right: 8px;
+  text-align: left;
+}
+
+.sidebar-session-delete {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.sidebar-session-delete:hover {
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.sidebar-footer {
+  border-top: 1px solid var(--border-card);
+  padding-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.user-profile-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  flex: 1;
+}
+
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: 600;
+  font-size: 14px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.user-details {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  text-align: left;
+}
+
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-email {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.logout-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.logout-btn:hover {
+  color: var(--error);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Main Content Styles */
+.main-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.main-content-header {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-card);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(10, 15, 26, 0.3);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.active-repo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border-card);
+  border-radius: 20px;
+  font-size: 13px;
+}
+
+.active-repo-badge a {
+  color: #a5b4fc;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.active-repo-badge a:hover {
+  text-decoration: underline;
+}
+
+/* Chat container and history layout */
+.chat-container-layout {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 24px;
+  overflow: hidden;
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.chat-history-layout {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 8px;
+  margin-bottom: 16px;
+}
+
+.chat-input-layout {
+  flex-shrink: 0;
+  margin-top: auto;
 }
 
 /* Logo Area */
@@ -97,22 +357,11 @@ body {
   -webkit-text-fill-color: transparent;
 }
 
-.logo-badge {
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  padding: 2px 8px;
-  border-radius: 20px;
-  background: var(--accent-light);
-  border: 1px solid rgba(99, 102, 241, 0.3);
-  color: #a5b4fc;
-}
-
 /* Hero Section */
 .hero {
   margin-bottom: 32px;
   animation: fadeIn 0.8s ease;
+  text-align: left;
 }
 
 .hero h1 {
@@ -145,6 +394,7 @@ body {
   margin-bottom: 16px;
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
   transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  text-align: left;
 }
 
 .glass-card:hover {
@@ -222,6 +472,10 @@ body {
   flex-shrink: 0;
   transition: all 0.3s ease;
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -311,7 +565,7 @@ body {
 
 .stat-value {
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   color: #ffffff;
   overflow: hidden;
@@ -331,11 +585,19 @@ body {
 .chat-window {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-card);
+  border-radius: 16px;
+  padding: 24px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  overflow: hidden;
 }
 
 .chat-history {
-  min-height: 250px;
-  max-height: 450px;
+  flex: 1;
   overflow-y: auto;
   padding-right: 4px;
   margin-bottom: 20px;
@@ -407,6 +669,7 @@ body {
   line-height: 1.6;
   border-radius: 16px;
   white-space: pre-wrap;
+  text-align: left;
 }
 
 .user .bubble {
@@ -430,7 +693,7 @@ body {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 13px;
-  color: #ff79c6;
+  color: #a5b4fc;
 }
 
 .bot .bubble pre {
@@ -445,7 +708,7 @@ body {
 .bot .bubble pre code {
   background: transparent;
   padding: 0;
-  color: #a9b2c3;
+  color: #e2e8f0;
 }
 
 /* Source citations */
@@ -491,6 +754,116 @@ body {
   margin-bottom: 16px;
 }
 
+/* Login Page Styling */
+.login-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  width: 100vw;
+  padding: 20px;
+  background: var(--bg-gradient);
+}
+
+.login-card {
+  max-width: 420px;
+  width: 100%;
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-card);
+  border-radius: 20px;
+  padding: 40px 32px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: fadeInUp 0.6s ease;
+}
+
+.login-logo {
+  width: 48px;
+  height: 48px;
+  background: linear-gradient(135deg, var(--accent-color) 0%, #8b5cf6 100%);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  margin-bottom: 16px;
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+}
+
+.login-title {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 800;
+  margin-bottom: 8px;
+  letter-spacing: -0.03em;
+  background: linear-gradient(to right, #ffffff, #d1d5db);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.login-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 32px;
+}
+
+.login-divider {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  margin: 24px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.login-divider::before, .login-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.login-divider::before {
+  margin-right: 12px;
+}
+
+.login-divider::after {
+  margin-left: 12px;
+}
+
+.demo-login-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.demo-login-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.google-btn-wrapper {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
 /* Animations */
 @keyframes fadeIn {
   from { opacity: 0; }
@@ -530,6 +903,24 @@ body {
   }
 }
 
+@media (max-width: 768px) {
+  .app-layout {
+    flex-direction: column;
+  }
+  
+  .sidebar {
+    width: 100%;
+    height: auto;
+    max-height: 220px;
+    border-right: none;
+    border-bottom: 1px solid var(--border-card);
+  }
+  
+  .main-content {
+    height: calc(100vh - 220px);
+  }
+}
+
 @media (max-width: 480px) {
   .flex-row {
     flex-direction: column;
@@ -546,4 +937,3 @@ body {
     width: 100%;
   }
 }
-
