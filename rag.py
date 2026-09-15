@@ -72,16 +72,21 @@ def ask(question, index, chunks):
         context += chunk["text"] + "\n"
 
     # Step 3: Send to Gemini
-    prompt = f"""You are a code assistant helping a developer understand a codebase.
-Use ONLY the code snippets below to answer the question.
-Always mention which file and function your answer comes from.
+    prompt = f"""You are an expert codebase assistant helping a developer understand this repository.
+Use ONLY the provided code snippets to answer the question.
+
+Guidelines:
+- Explain clearly with concise, structured explanations.
+- Mention the exact file paths and function names where the logic is defined.
+- Use standard markdown formatting (clean headings, bullet points with `-`, backticks for code `like_this()`, and formatted code blocks).
+- Avoid unnecessary markdown symbols, multiple asterisks, or visual clutter.
 
 Code context:
 {context}
 
 Question: {question}
 
-Answer clearly and mention the exact file and function name."""
+Answer:"""
 
     response = client.models.generate_content(
         model="gemini-2.5-flash",

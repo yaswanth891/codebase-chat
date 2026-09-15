@@ -1,134 +1,320 @@
-import { useState, useRef, useEffect } from "react"
-import axios from "axios"
+import { useState, useRef, useEffect } from "react";
+import axios from "axios";
 
-const API = import.meta.env.VITE_API_URL || "https://codebase-chat-itiz.onrender.com"
+const API =
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? "http://localhost:8000"
+    : "https://codebase-chat-itiz.onrender.com");
 
+// ── Markdown Formatter Component (No Asterisk Artifacts) ──────────────────────────
+function FormattedInline({ text }) {
+  if (!text) return null;
+
+  // Clean any triple/double asterisks or rogue chars first
+  // Tokenize by inline code, bold, italic
+  const parts = [];
+  let remaining = text;
+
+  // Regex matches: `inline code`, **bold**, *italic*
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|(?<!\*)\*[^*]+\*(?!\*))/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({
+        type: "text",
+        content: text.substring(lastIndex, match.index),
+      });
+    }
+
+    const matchedStr = match[0];
+    if (matchedStr.startsWith("`") && matchedStr.endsWith("`")) {
+      parts.push({
+        type: "code",
+        content: matchedStr.slice(1, -1),
+      });
+    } else if (
+      (matchedStr.startsWith("**") && matchedStr.endsWith("**")) ||
+      (matchedStr.startsWith("__") && matchedStr.endsWith("__"))
+    ) {
+      parts.push({
+        type: "bold",
+        content: matchedStr.slice(2, -2),
+      });
+    } else if (matchedStr.startsWith("*") && matchedStr.endsWith("*")) {
+      parts.push({
+        type: "italic",
+        content: matchedStr.slice(1, -1),
+      });
+    }
+    lastIndex = match.index + matchedStr.length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({
+      type: "text",
+      content: text.substring(lastIndex),
+    });
+  }
+
+  return (
+    <>
+      {parts.map((part, idx) => {
+        if (part.type === "code") {
+          return (
+            <code key={idx} className="inline-code">
+              {part.content}
+            </code>
+          );
+        }
+        if (part.type === "bold") {
+          return (
+            <strong key={idx} className="font-semibold text-white">
+              {part.content}
+            </strong>
+          );
+        }
+        if (part.type === "italic") {
+          return (
+            <em key={idx} className="italic text-slate-300">
+              {part.content}
+            </em>
+          );
+        }
+        // Clean any stray asterisk that wasn't paired
+        const cleaned = part.content.replace(/\*{1,3}/g, "");
+        return <span key={idx}>{cleaned}</span>;
+      })}
+    </>
+  );
+}
+
+function CodeBlock({ code, lang }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="code-block-wrapper">
+      <div className="code-block-header">
+        <span className="code-block-lang">{lang || "code"}</span>
+        <button
+          className="code-copy-btn"
+          onClick={handleCopy}
+          type="button"
+          title="Copy code"
+        >
+          {copied ? (
+            <>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              <span>Copied</span>
+            </>
+          ) : (
+            <>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+              <span>Copy</span>
+            </>
+          )}
+        </button>
+      </div>
+      <pre className="code-pre">
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+function FormattedMessage({ text }) {
+  if (!text) return "";
+
+  // Split by markdown fenced code blocks ```lang ... ```
+  const rawBlocks = text.split(/(```[\s\S]*?```)/g);
+
+  return (
+    <div className="formatted-message-body">
+      {rawBlocks.map((block, blockIndex) => {
+        if (block.startsWith("```") && block.endsWith("```")) {
+          const content = block.slice(3, -3).trim();
+          const firstLineBreak = content.indexOf("\n");
+          let lang = "";
+          let code = content;
+
+          if (firstLineBreak > 0) {
+            const possibleLang = content.slice(0, firstLineBreak).trim();
+            if (/^[a-zA-Z0-9_#-]+$/.test(possibleLang)) {
+              lang = possibleLang;
+              code = content.slice(firstLineBreak + 1);
+            }
+          }
+          return <CodeBlock key={blockIndex} code={code} lang={lang} />;
+        }
+
+        // Process prose block lines
+        const lines = block.split("\n");
+        const renderedElements = [];
+        let currentList = [];
+        let listType = null; // 'ul' or 'ol'
+
+        const flushList = (keyPrefix) => {
+          if (currentList.length > 0) {
+            if (listType === "ol") {
+              renderedElements.push(
+                <ol key={`${keyPrefix}-ol`} className="message-ol">
+                  {currentList.map((item, liIdx) => (
+                    <li key={liIdx}>
+                      <FormattedInline text={item} />
+                    </li>
+                  ))}
+                </ol>
+              );
+            } else {
+              renderedElements.push(
+                <ul key={`${keyPrefix}-ul`} className="message-ul">
+                  {currentList.map((item, liIdx) => (
+                    <li key={liIdx}>
+                      <FormattedInline text={item} />
+                    </li>
+                  ))}
+                </ul>
+              );
+            }
+            currentList = [];
+            listType = null;
+          }
+        };
+
+        lines.forEach((line, lineIdx) => {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            flushList(`empty-${lineIdx}`);
+            return;
+          }
+
+          // Heading checks: ### Heading, ## Heading, # Heading
+          if (trimmed.startsWith("### ")) {
+            flushList(`h3-${lineIdx}`);
+            renderedElements.push(
+              <h3 key={`h3-${lineIdx}`} className="message-h3">
+                <FormattedInline text={trimmed.slice(4)} />
+              </h3>
+            );
+            return;
+          }
+          if (trimmed.startsWith("## ")) {
+            flushList(`h2-${lineIdx}`);
+            renderedElements.push(
+              <h2 key={`h2-${lineIdx}`} className="message-h2">
+                <FormattedInline text={trimmed.slice(3)} />
+              </h2>
+            );
+            return;
+          }
+          if (trimmed.startsWith("# ")) {
+            flushList(`h1-${lineIdx}`);
+            renderedElements.push(
+              <h1 key={`h1-${lineIdx}`} className="message-h1">
+                <FormattedInline text={trimmed.slice(2)} />
+              </h1>
+            );
+            return;
+          }
+
+          // Unordered list item check: * item or - item or + item
+          const ulMatch = trimmed.match(/^[-*+]\s+(.+)/);
+          if (ulMatch) {
+            if (listType && listType !== "ul") {
+              flushList(`switch-ul-${lineIdx}`);
+            }
+            listType = "ul";
+            currentList.push(ulMatch[1]);
+            return;
+          }
+
+          // Ordered list item check: 1. item
+          const olMatch = trimmed.match(/^\d+\.\s+(.+)/);
+          if (olMatch) {
+            if (listType && listType !== "ol") {
+              flushList(`switch-ol-${lineIdx}`);
+            }
+            listType = "ol";
+            currentList.push(olMatch[1]);
+            return;
+          }
+
+          // Regular paragraph line
+          flushList(`flush-${lineIdx}`);
+          renderedElements.push(
+            <p key={`p-${lineIdx}`} className="message-p">
+              <FormattedInline text={trimmed} />
+            </p>
+          );
+        });
+
+        flushList(`final-${blockIndex}`);
+
+        return <div key={blockIndex}>{renderedElements}</div>;
+      })}
+    </div>
+  );
+}
+
+// ── Main App Component ─────────────────────────────────────────────────────────────
 export default function App() {
-  // Authentication State
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem("chat_user");
-    return saved ? JSON.parse(saved) : null;
-  });
-  const [token, setToken] = useState(() => {
-    return localStorage.getItem("chat_token") || null;
-  });
-  
-  // App State
+  // App Sessions & Navigation
   const [sessions, setSessions] = useState([]);
   const [activeSessionId, setActiveSessionId] = useState(null);
   const [messages, setMessages] = useState([]);
-  
-  // Input / Loading States
+
+  // Repository Indexing State
   const [githubUrl, setGithubUrl] = useState("");
-  const [indexStatus, setIndexStatus] = useState(null);
+  const [indexStatus, setIndexStatus] = useState(null); // 'loading' | 'success' | 'error'
   const [indexInfo, setIndexInfo] = useState(null);
   const [indexError, setIndexError] = useState("");
+
+  // Chat Query State
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
-  
-  // Auth Form State
-  const [demoEmail, setDemoEmail] = useState("");
-  const [loginError, setLoginError] = useState("");
+  const [copiedMsgIdx, setCopiedMsgIdx] = useState(null);
 
   const chatEndRef = useRef(null);
+  const inputRef = useRef(null);
 
   // Auto-scroll chat history
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, asking]);
 
-  // Request Headers Helper
-  const getHeaders = () => {
-    return token ? { headers: { Authorization: `Bearer ${token}` } } : {};
-  };
-
-  // Google OAuth Initialization
+  // Initial Load: Fetch Sessions
   useEffect(() => {
-    if (user) return;
-    
-    const initGoogle = () => {
-      if (window.google) {
-        window.google.accounts.id.initialize({
-          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID || "915830720496-d3v1e5vqvef4b4r8719h1f7a1q6lkn1e.apps.googleusercontent.com",
-          callback: handleGoogleCredentialResponse,
-        });
-        window.google.accounts.id.renderButton(
-          document.getElementById("google-signin-btn"),
-          { theme: "outline", size: "large", width: "100%" }
-        );
-      } else {
-        setTimeout(initGoogle, 300);
-      }
-    };
-    
-    initGoogle();
-  }, [user]);
-
-  // Handle Google Login Callback
-  async function handleGoogleCredentialResponse(response) {
-    const credential = response.credential;
-    try {
-      setLoginError("");
-      const res = await axios.post(`${API}/auth/login`, { token: credential });
-      const { user: loggedUser, token: authToken } = res.data;
-      localStorage.setItem("chat_token", authToken);
-      localStorage.setItem("chat_user", JSON.stringify(loggedUser));
-      setToken(authToken);
-      setUser(loggedUser);
-    } catch (err) {
-      setLoginError(err.response?.data?.detail || "Google authentication failed. Please try again.");
-    }
-  }
-
-  // Handle Demo Login
-  async function handleDemoLogin(e) {
-    e.preventDefault();
-    if (!demoEmail.trim() || !demoEmail.includes("@")) {
-      setLoginError("Please enter a valid Gmail address.");
-      return;
-    }
-    try {
-      setLoginError("");
-      const demoToken = `demo:${demoEmail.trim().toLowerCase()}`;
-      const res = await axios.post(`${API}/auth/login`, { token: demoToken });
-      const { user: loggedUser, token: authToken } = res.data;
-      localStorage.setItem("chat_token", authToken);
-      localStorage.setItem("chat_user", JSON.stringify(loggedUser));
-      setToken(authToken);
-      setUser(loggedUser);
-    } catch (err) {
-      setLoginError(err.response?.data?.detail || "Demo sign in failed. Please try again.");
-    }
-  }
-
-  // Handle Sign Out
-  function handleSignOut() {
-    localStorage.removeItem("chat_token");
-    localStorage.removeItem("chat_user");
-    setUser(null);
-    setToken(null);
-    setSessions([]);
-    setActiveSessionId(null);
-    setMessages([]);
-  }
-
-  // Load user sessions
-  useEffect(() => {
-    if (user && token) {
-      loadSessions();
-    }
-  }, [user, token]);
+    loadSessions();
+  }, []);
 
   async function loadSessions() {
     try {
-      const res = await axios.get(`${API}/sessions`, getHeaders());
+      const res = await axios.get(`${API}/sessions`);
       setSessions(res.data);
       if (res.data.length > 0) {
-        // Load the most recently updated session
         selectSession(res.data[0].id, res.data);
+      } else {
+        // Auto-create initial session if none exists
+        handleNewChat();
       }
     } catch (err) {
       console.error("Failed to load sessions:", err);
+      // Fallback: create fresh session
+      handleNewChat();
     }
   }
 
@@ -140,18 +326,18 @@ export default function App() {
     setIndexInfo(null);
     setIndexError("");
 
-    const session = sessionsList.find(s => s.id === sessionId);
+    const session = sessionsList.find((s) => s.id === sessionId);
     if (session && session.repo_name) {
       setIndexInfo({
         repo: session.repo_name,
         total_chunks: "loaded",
-        files_indexed: "loaded"
+        files_indexed: "loaded",
       });
       setIndexStatus("success");
     }
 
     try {
-      const res = await axios.get(`${API}/sessions/${sessionId}/messages`, getHeaders());
+      const res = await axios.get(`${API}/sessions/${sessionId}/messages`);
       setMessages(res.data);
     } catch (err) {
       console.error("Failed to load session messages:", err);
@@ -161,8 +347,8 @@ export default function App() {
   // Create a new chat session
   async function handleNewChat() {
     try {
-      const res = await axios.post(`${API}/sessions`, {}, getHeaders());
-      setSessions(prev => [res.data, ...prev]);
+      const res = await axios.post(`${API}/sessions`, {});
+      setSessions((prev) => [res.data, ...prev.filter((s) => s.id !== res.data.id)]);
       setActiveSessionId(res.data.id);
       setMessages([]);
       setGithubUrl("");
@@ -177,18 +363,15 @@ export default function App() {
   // Delete a chat session
   async function handleDeleteSession(sessionId, e) {
     e.stopPropagation();
-    if (!confirm("Are you sure you want to delete this chat session?")) return;
-    
     try {
-      await axios.delete(`${API}/sessions/${sessionId}`, getHeaders());
-      const remaining = sessions.filter(s => s.id !== sessionId);
+      await axios.delete(`${API}/sessions/${sessionId}`);
+      const remaining = sessions.filter((s) => s.id !== sessionId);
       setSessions(remaining);
       if (activeSessionId === sessionId) {
         if (remaining.length > 0) {
           selectSession(remaining[0].id, remaining);
         } else {
-          setActiveSessionId(null);
-          setMessages([]);
+          handleNewChat();
         }
       }
     } catch (err) {
@@ -197,59 +380,80 @@ export default function App() {
   }
 
   // Index repository for active session
-  async function handleIndex() {
-    if (!githubUrl.trim() || !activeSessionId) return;
+  async function handleIndex(targetUrl) {
+    const urlToIndex = targetUrl || githubUrl;
+    if (!urlToIndex.trim() || !activeSessionId) return;
+
+    setGithubUrl(urlToIndex);
     setIndexStatus("loading");
     setIndexInfo(null);
     setIndexError("");
+
     try {
       const res = await axios.post(`${API}/sessions/${activeSessionId}/index`, {
-        github_url: githubUrl
-      }, getHeaders());
-      
+        github_url: urlToIndex.trim(),
+      });
+
       // Update session info locally
-      setSessions(prev => prev.map(s => {
-        if (s.id === activeSessionId) {
-          return { ...s, repo_url: githubUrl, repo_name: res.data.repo, title: `Chat on ${res.data.repo}` };
-        }
-        return s;
-      }));
-      
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.id === activeSessionId) {
+            return {
+              ...s,
+              repo_url: urlToIndex.trim(),
+              repo_name: res.data.repo,
+              title: `Chat on ${res.data.repo}`,
+            };
+          }
+          return s;
+        })
+      );
+
       setIndexInfo(res.data);
       setIndexStatus("success");
       setMessages([]);
+      setTimeout(() => inputRef.current?.focus(), 150);
     } catch (err) {
-      setIndexError(err.response?.data?.detail || "Could not index. Make sure the repo is public and try again.");
+      setIndexError(
+        err.response?.data?.detail ||
+          "Could not index repository. Please make sure the repo is public and contains Python code."
+      );
       setIndexStatus("error");
     }
   }
 
-  // Send a message
+  // Send a question
   async function handleAsk(text) {
     const q = text || question;
     if (!q.trim() || asking || !activeSessionId) return;
-    
+
     const userMessage = { role: "user", text: q };
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev) => [...prev, userMessage]);
     setQuestion("");
     setAsking(true);
-    
+
     try {
       const res = await axios.post(`${API}/sessions/${activeSessionId}/query`, {
-        question: q
-      }, getHeaders());
-      
-      setMessages(prev => [...prev, {
-        role: "bot",
-        text: res.data.answer,
-        sources: res.data.sources
-      }]);
+        question: q,
+      });
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "bot",
+          text: res.data.answer,
+          sources: res.data.sources,
+        },
+      ]);
     } catch (err) {
-      setMessages(prev => [...prev, {
-        role: "bot",
-        text: err.response?.data?.detail || "Something went wrong. Please try again.",
-        sources: []
-      }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "bot",
+          text: err.response?.data?.detail || "Something went wrong while querying the codebase.",
+          sources: [],
+        },
+      ]);
     } finally {
       setAsking(false);
     }
@@ -262,148 +466,82 @@ export default function App() {
     }
   }
 
-  // Format code blocks & inline code in responses
-  function formatMessage(text) {
-    if (!text) return "";
-    
-    const parts = text.split(/(```[\s\S]*?```)/g);
-    return parts.map((part, index) => {
-      if (part.startsWith("```") && part.endsWith("```")) {
-        const code = part.slice(3, -3).trim();
-        const lines = code.split("\n");
-        let displayCode = code;
-        let lang = "";
-        
-        if (lines.length > 1 && /^[a-zA-Z0-9_-]+$/.test(lines[0])) {
-          lang = lines[0];
-          displayCode = lines.slice(1).join("\n");
-        }
-        
-        return (
-          <pre key={index}>
-            <code className={lang}>{displayCode}</code>
-          </pre>
-        );
-      }
-      
-      const subParts = part.split(/(`[^`\n]+`)/g);
-      return subParts.map((subPart, subIndex) => {
-        if (subPart.startsWith("`") && subPart.endsWith("`")) {
-          return <code key={`${index}-${subIndex}`}>{subPart.slice(1, -1)}</code>;
-        }
-        return subPart;
-      });
-    });
-  }
+  const copyFullMessage = (text, idx) => {
+    navigator.clipboard.writeText(text);
+    setCopiedMsgIdx(idx);
+    setTimeout(() => setCopiedMsgIdx(null), 2000);
+  };
 
-  const suggestions = [
-    "How does routing work?",
-    "What is the request lifecycle?",
-    "How are errors handled?",
+  const sampleRepos = [
+    { name: "pallets/flask", desc: "Python WSGI microframework", url: "https://github.com/pallets/flask" },
+    { name: "fastapi/fastapi", desc: "High-performance Python web framework", url: "https://github.com/fastapi/fastapi" },
+    { name: "psf/requests", desc: "HTTP for Humans", url: "https://github.com/psf/requests" },
   ];
 
-  // Active Session info
-  const activeSession = sessions.find(s => s.id === activeSessionId);
+  const suggestedQuestions = [
+    "Give an architectural overview of this repository",
+    "Where is authentication and request validation handled?",
+    "List the main API endpoints and their function handlers",
+    "How does error handling and database access work?",
+  ];
 
-  // ── 1. LOGIN SCREEN ──
-  if (!user) {
-    return (
-      <div className="login-container">
-        <div className="login-card">
-          <div className="login-logo">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="4 17 10 11 4 5" />
-              <line x1="12" y1="19" x2="20" y2="19" />
-            </svg>
-          </div>
-          <h1 className="login-title">Codebase Chat</h1>
-          <p className="login-subtitle">Authenticate to start chatting with your repositories and save your history.</p>
-          
-          {loginError && (
-            <div className="status-indicator error" style={{ width: "100%", marginTop: 0, marginBottom: "20px" }}>
-              <span>{loginError}</span>
-            </div>
-          )}
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
 
-          {/* Google Login Button */}
-          <div className="google-btn-wrapper">
-            <div id="google-signin-btn" style={{ width: "100%" }}></div>
-          </div>
-
-          <div className="login-divider">or</div>
-
-          {/* Fallback Gmail Demo Login */}
-          <form className="demo-login-form" onSubmit={handleDemoLogin}>
-            <div className="demo-login-label">Gmail Address</div>
-            <div className="input-container">
-              <span className="input-icon">@</span>
-              <input
-                className="custom-input"
-                type="email"
-                placeholder="you@gmail.com"
-                value={demoEmail}
-                onChange={e => setDemoEmail(e.target.value)}
-                required
-              />
-            </div>
-            <button className="btn-primary" type="submit" style={{ width: "100%" }}>
-              Launch Demo Chat
-            </button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  // ── 2. APPLICATION DASHBOARD (Logged In) ──
   return (
     <div className="app-layout">
-      {/* LEFT SIDEBAR */}
+      {/* ── SIDEBAR ── */}
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <div className="logo-icon" style={{ width: "28px", height: "28px" }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="4 17 10 11 4 5" />
-              <line x1="12" y1="19" x2="20" y2="19" />
+          <div className="brand-logo-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
             </svg>
           </div>
-          <span className="logo-name" style={{ fontSize: "16px" }}>Codebase Chat</span>
+          <div className="brand-text">
+            <span className="brand-title">Codebase Chat</span>
+            <span className="brand-badge">PRO</span>
+          </div>
         </div>
 
-        <button className="sidebar-new-chat-btn" onClick={handleNewChat}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+        <button className="new-chat-btn" onClick={handleNewChat}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
             <line x1="12" y1="5" x2="12" y2="19" />
             <line x1="5" y1="12" x2="19" y2="12" />
           </svg>
-          New Chat
+          <span>New Session</span>
+          <kbd className="kbd-shortcut">⌘N</kbd>
         </button>
 
-        <div className="sidebar-sessions">
-          <div className="card-label" style={{ paddingLeft: "4px" }}>Recent Chats</div>
+        <div className="sidebar-section-title">CHATS & SESSIONS</div>
+
+        <div className="sidebar-sessions-list">
           {sessions.length === 0 ? (
-            <div style={{ padding: "10px 4px", fontSize: "13px", color: "var(--text-muted)", fontStyle: "italic" }}>
-              No chats yet.
-            </div>
+            <div className="empty-sessions-notice">No sessions yet</div>
           ) : (
-            sessions.map(s => (
+            sessions.map((s) => (
               <div
                 key={s.id}
-                className={`sidebar-session-item ${s.id === activeSessionId ? "active" : ""}`}
+                className={`session-nav-item ${s.id === activeSessionId ? "active" : ""}`}
                 onClick={() => selectSession(s.id)}
               >
-                <span className="sidebar-session-title">
-                  {s.title}
-                </span>
+                <div className="session-item-icon">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                </div>
+                <div className="session-item-content">
+                  <span className="session-item-title">{s.title || "New Chat"}</span>
+                  {s.repo_name && <span className="session-item-repo">{s.repo_name}</span>}
+                </div>
                 <button
-                  className="sidebar-session-delete"
+                  className="session-delete-btn"
                   onClick={(e) => handleDeleteSession(s.id, e)}
-                  title="Delete Session"
+                  title="Delete session"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="3 6 5 6 21 6" />
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    <line x1="10" y1="11" x2="10" y2="17" />
-                    <line x1="14" y1="11" x2="14" y2="17" />
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
                   </svg>
                 </button>
               </div>
@@ -411,208 +549,365 @@ export default function App() {
           )}
         </div>
 
+        {/* Sidebar Footer */}
         <div className="sidebar-footer">
-          <div className="user-profile-info">
-            {user.picture ? (
-              <img className="user-avatar" src={user.picture} alt={user.name} />
-            ) : (
-              <div className="user-avatar">
-                {user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
-              </div>
-            )}
-            <div className="user-details">
-              <span className="user-name">{user.name || "User"}</span>
-              <span className="user-email">{user.email}</span>
+          <div className="workspace-status">
+            <div className="status-dot"></div>
+            <div className="status-meta">
+              <span className="status-label">Workspace Active</span>
+              <span className="status-sub">RAG Engine Ready</span>
             </div>
           </div>
-          <button className="logout-btn" onClick={handleSignOut} title="Log Out">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-              <polyline points="16 17 21 12 16 7" />
-              <line x1="21" y1="12" x2="9" y2="12" />
-            </svg>
-          </button>
         </div>
       </aside>
 
-      {/* MAIN CONTENT AREA */}
-      <main className="main-content">
-        {activeSession ? (
-          <>
-            {/* Header info */}
-            {activeSession.repo_url && (
-              <div className="main-content-header">
-                <div className="active-repo-badge">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22" />
-                  </svg>
-                  <a href={activeSession.repo_url} target="_blank" rel="noreferrer">
-                    {activeSession.repo_name}
-                  </a>
-                </div>
-                
-                {indexStatus === "success" && (
-                  <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                    Repository Indexed
-                  </div>
-                )}
+      {/* ── MAIN CONTENT ── */}
+      <main className="main-viewport">
+        {/* TOP BAR */}
+        <header className="viewport-header">
+          <div className="header-left">
+            {activeSession?.repo_name ? (
+              <div className="repo-pill-badge">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
+                </svg>
+                <a
+                  href={activeSession.repo_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="repo-pill-link"
+                >
+                  {activeSession.repo_name}
+                </a>
+                <span className="repo-status-chip">Indexed</span>
+              </div>
+            ) : (
+              <div className="header-session-title">
+                <span>Codebase Explorer</span>
               </div>
             )}
+          </div>
 
-            {/* Chat or Index setup */}
-            <div className="chat-container-layout">
-              {!activeSession.repo_url ? (
-                /* REPOSITORY SETUP (New Session, no repo url) */
-                <div style={{ width: "100%", margin: "auto 0" }}>
-                  <div className="hero">
-                    <h1>Understand any codebase, instantly</h1>
-                    <p>Paste a public GitHub repository URL, ask questions in plain English, and get precise answers with source citations.</p>
+          <div className="header-right">
+            {activeSession?.repo_url && (
+              <button
+                className="header-action-btn"
+                onClick={() => {
+                  setSessions((prev) =>
+                    prev.map((s) =>
+                      s.id === activeSessionId ? { ...s, repo_url: null, repo_name: null } : s
+                    )
+                  );
+                  setMessages([]);
+                  setIndexStatus(null);
+                }}
+                title="Connect a different repository"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>Switch Repo</span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* VIEWPORT BODY */}
+        <div className="viewport-body">
+          {!activeSession?.repo_url ? (
+            /* ── REPO SETUP VIEW ── */
+            <div className="setup-container">
+              <div className="setup-hero">
+                <div className="hero-badge">
+                  <span className="pulse-dot"></span>
+                  AST Function Chunking & Vector Search
+                </div>
+                <h1 className="hero-title">
+                  Understand any codebase, <span className="gradient-text">instantly</span>.
+                </h1>
+                <p className="hero-desc">
+                  Index any public GitHub repository to extract functions, build high-dimensional embeddings, and query logic with precise file and line citations.
+                </p>
+              </div>
+
+              <div className="setup-card">
+                <div className="setup-input-row">
+                  <div className="setup-input-wrap">
+                    <span className="setup-input-icon">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="2" y1="12" x2="22" y2="12" />
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                      </svg>
+                    </span>
+                    <input
+                      className="setup-input"
+                      type="text"
+                      placeholder="https://github.com/username/repository"
+                      value={githubUrl}
+                      onChange={(e) => setGithubUrl(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleIndex()}
+                      disabled={indexStatus === "loading"}
+                      autoFocus
+                    />
                   </div>
-
-                  <div className="glass-card">
-                    <div className="card-label">Repository Setup</div>
-                    <div className="flex-row">
-                      <div className="input-container">
-                        <span className="input-icon">#</span>
-                        <input
-                          className="custom-input"
-                          type="text"
-                          placeholder="https://github.com/owner/repo"
-                          value={githubUrl}
-                          onChange={e => setGithubUrl(e.target.value)}
-                          disabled={indexStatus === "loading"}
-                        />
-                      </div>
-                      <button
-                        className="btn-primary"
-                        onClick={handleIndex}
-                        disabled={indexStatus === "loading" || !githubUrl.trim()}
-                      >
-                        {indexStatus === "loading" ? "Indexing..." : "Index Repo"}
-                      </button>
-                    </div>
-
-                    {indexStatus === "loading" && (
-                      <div className="status-indicator loading">
-                        <div className="spinner"></div>
-                        <span>Cloning and indexing repository — this usually takes 1–2 minutes...</span>
-                      </div>
-                    )}
-                    
-                    {indexStatus === "error" && (
-                      <div className="status-indicator error">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <circle cx="12" cy="12" r="10" />
-                          <line x1="12" y1="8" x2="12" y2="12" />
-                          <line x1="12" y1="16" x2="12.01" y2="16" />
+                  <button
+                    className="setup-submit-btn"
+                    onClick={() => handleIndex()}
+                    disabled={indexStatus === "loading" || !githubUrl.trim()}
+                  >
+                    {indexStatus === "loading" ? (
+                      <>
+                        <div className="btn-spinner"></div>
+                        <span>Indexing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>Index Repository</span>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <polyline points="9 18 15 12 9 6" />
                         </svg>
-                        <span>{indexError}</span>
-                      </div>
+                      </>
                     )}
+                  </button>
+                </div>
+
+                {/* Loading Status with Step Progress */}
+                {indexStatus === "loading" && (
+                  <div className="indexing-status-box">
+                    <div className="indexing-header">
+                      <div className="btn-spinner"></div>
+                      <span>Cloning and indexing repository AST...</span>
+                    </div>
+                    <div className="indexing-steps">
+                      <div className="indexing-step active">
+                        <span className="step-check">✓</span> 1. Cloning git tree
+                      </div>
+                      <div className="indexing-step active">
+                        <span className="step-check">✓</span> 2. Extracting Python AST functions
+                      </div>
+                      <div className="indexing-step in-progress">
+                        <span className="step-pulse"></span> 3. Generating Gemini vector embeddings
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Error Banner */}
+                {indexStatus === "error" && (
+                  <div className="setup-error-banner">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    <span>{indexError}</span>
+                  </div>
+                )}
+
+                {/* Quick Start Repositories */}
+                <div className="quick-repos-section">
+                  <div className="quick-repos-label">Quick-start with popular repositories:</div>
+                  <div className="quick-repos-grid">
+                    {sampleRepos.map((repo, idx) => (
+                      <button
+                        key={idx}
+                        className="quick-repo-card"
+                        onClick={() => handleIndex(repo.url)}
+                        disabled={indexStatus === "loading"}
+                      >
+                        <div className="quick-repo-name">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
+                          </svg>
+                          <span>{repo.name}</span>
+                        </div>
+                        <div className="quick-repo-desc">{repo.desc}</div>
+                      </button>
+                    ))}
                   </div>
                 </div>
-              ) : (
-                /* CHAT WINDOW INTERFACE */
-                <div className="chat-window">
-                  <div className="chat-history">
-                    {messages.length === 0 && (
-                      <div className="empty-chat">
-                        <p className="empty-chat-title">Ask a question about the repository structures or logic</p>
-                        <div className="suggestions-grid">
-                          {suggestions.map((q, i) => (
-                            <button key={i} className="suggestion-btn" onClick={() => handleAsk(q)}>
-                              {q}
-                            </button>
-                          ))}
+              </div>
+            </div>
+          ) : (
+            /* ── CHAT SESSION VIEW ── */
+            <div className="chat-interface">
+              <div className="messages-scroll-area">
+                {messages.length === 0 && (
+                  <div className="chat-empty-state">
+                    <div className="empty-state-icon">
+                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                    </div>
+                    <h3 className="empty-state-title">Ready to analyze {activeSession.repo_name}</h3>
+                    <p className="empty-state-sub">
+                      Ask any question regarding functions, routes, data flow, or architecture.
+                    </p>
+
+                    <div className="suggestions-list">
+                      {suggestedQuestions.map((q, idx) => (
+                        <button
+                          key={idx}
+                          className="suggestion-chip"
+                          onClick={() => handleAsk(q)}
+                        >
+                          <span className="suggestion-arrow">›</span>
+                          <span>{q}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {messages.map((msg, i) => (
+                  <div key={i} className={`chat-message-row ${msg.role}`}>
+                    <div className="message-avatar">
+                      {msg.role === "user" ? (
+                        <span className="user-avatar-badge">YOU</span>
+                      ) : (
+                        <div className="bot-avatar-badge">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <polyline points="16 18 22 12 16 6" />
+                            <polyline points="8 6 2 12 8 18" />
+                          </svg>
                         </div>
-                      </div>
-                    )}
-                    
-                    {messages.map((msg, i) => (
-                      <div key={i} className={`message-row ${msg.role}`}>
-                        <div className="bubble">
-                          {msg.role === "bot" ? formatMessage(msg.text) : msg.text}
-                        </div>
-                        {msg.sources && msg.sources.length > 0 && (
-                          <div className="citations-list">
-                            {msg.sources.map((src, j) => (
-                              <span key={j} className="citation-tag" title={src.file}>
-                                <span className="citation-icon"></span>
-                                {src.file.split("/").pop()} · {src.function_name}() line {src.start_line}
-                              </span>
-                            ))}
-                          </div>
+                      )}
+                    </div>
+
+                    <div className="message-content-box">
+                      <div className="message-header-bar">
+                        <span className="message-sender-name">
+                          {msg.role === "user" ? "You" : "Codebase AI"}
+                        </span>
+                        {msg.role === "bot" && (
+                          <button
+                            className="message-action-btn"
+                            onClick={() => copyFullMessage(msg.text, i)}
+                            title="Copy response"
+                          >
+                            {copiedMsgIdx === i ? (
+                              <>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                                <span>Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                </svg>
+                                <span>Copy</span>
+                              </>
+                            )}
+                          </button>
                         )}
                       </div>
-                    ))}
-                    
-                    {asking && (
-                      <div className="message-row bot">
-                        <div className="bubble">
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <div className="spinner"></div>
-                            <span>Analyzing codebase context...</span>
+
+                      <div className="message-bubble">
+                        {msg.role === "bot" ? (
+                          <FormattedMessage text={msg.text} />
+                        ) : (
+                          <p className="user-query-text">{msg.text}</p>
+                        )}
+                      </div>
+
+                      {msg.sources && msg.sources.length > 0 && (
+                        <div className="sources-container">
+                          <div className="sources-header">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <polyline points="14 2 14 8 20 8" />
+                            </svg>
+                            <span>Referenced Source Chunks ({msg.sources.length})</span>
+                          </div>
+                          <div className="sources-grid">
+                            {msg.sources.map((src, j) => (
+                              <div key={j} className="source-card" title={src.file}>
+                                <div className="source-file-row">
+                                  <span className="source-icon">📄</span>
+                                  <span className="source-file-name">
+                                    {src.file.split("/").pop()}
+                                  </span>
+                                  <span className="source-line-tag">
+                                    line {src.start_line}
+                                  </span>
+                                </div>
+                                <div className="source-func-name">
+                                  <code>{src.function_name}()</code>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
-                      </div>
-                    )}
-                    
-                    <div ref={chatEndRef} />
-                  </div>
-
-                  <div className="chat-divider" />
-
-                  {/* Chat Input Field */}
-                  <div className="flex-row">
-                    <div className="input-container">
-                      <span className="input-icon">›</span>
-                      <input
-                        className="custom-input"
-                        type="text"
-                        placeholder="Ask anything about the codebase..."
-                        value={question}
-                        onChange={e => setQuestion(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        disabled={asking}
-                      />
+                      )}
                     </div>
-                    <button
-                      className="btn-primary"
-                      onClick={() => handleAsk()}
-                      disabled={asking || !question.trim()}
-                    >
-                      Ask
-                    </button>
                   </div>
+                ))}
+
+                {asking && (
+                  <div className="chat-message-row bot">
+                    <div className="message-avatar">
+                      <div className="bot-avatar-badge">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <polyline points="16 18 22 12 16 6" />
+                          <polyline points="8 6 2 12 8 18" />
+                        </svg>
+                      </div>
+                    </div>
+                    <div className="message-content-box">
+                      <div className="message-bubble thinking-bubble">
+                        <div className="thinking-loader">
+                          <span className="loader-dot"></span>
+                          <span className="loader-dot"></span>
+                          <span className="loader-dot"></span>
+                        </div>
+                        <span className="thinking-label">Querying vector index & synthesizing answer...</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Chat Input Bar */}
+              <div className="chat-input-container">
+                <div className="chat-input-bar">
+                  <div className="input-prompt-icon">›</div>
+                  <input
+                    ref={inputRef}
+                    className="chat-text-input"
+                    type="text"
+                    placeholder="Ask anything about this codebase (e.g. explain auth flow, list endpoints)..."
+                    value={question}
+                    onChange={(e) => setQuestion(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={asking}
+                  />
+                  <button
+                    className="chat-send-btn"
+                    onClick={() => handleAsk()}
+                    disabled={asking || !question.trim()}
+                    type="button"
+                  >
+                    <span>Send</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                  </button>
                 </div>
-              )}
+                <div className="chat-input-footer">
+                  <span>Press <kbd>Enter</kbd> to submit query · Grounded in AST code chunks</span>
+                </div>
+              </div>
             </div>
-          </>
-        ) : (
-          /* NO ACTIVE CHAT WELCOME SCREEN */
-          <div style={{ margin: "auto", padding: "40px", textAlign: "center", maxWidth: "500px" }}>
-            <div className="login-logo" style={{ margin: "0 auto 24px" }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <polyline points="4 17 10 11 4 5" />
-                <line x1="12" y1="19" x2="20" y2="19" />
-              </svg>
-            </div>
-            <h2 style={{ fontFamily: "var(--font-display)", fontSize: "24px", fontWeight: 700, marginBottom: "12px" }}>
-              Welcome back, {user.name || "Developer"}!
-            </h2>
-            <p style={{ color: "var(--text-secondary)", fontSize: "15px", lineHeight: 1.6, marginBottom: "24px" }}>
-              Select an existing chat from the sidebar, or create a new chat to begin exploring a codebase.
-            </p>
-            <button className="btn-primary" onClick={handleNewChat} style={{ margin: "0 auto" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-              Start New Chat
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </main>
     </div>
-  )
+  );
 }
