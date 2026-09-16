@@ -930,6 +930,16 @@ body {
   color: #e2e8f0;
 }
 
+.message-blockquote {
+  margin: 8px 0;
+  padding: 6px 14px;
+  border-left: 3px solid var(--accent-cyan);
+  background: rgba(56, 189, 248, 0.05);
+  border-radius: 0 6px 6px 0;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
 .inline-code {
   font-family: var(--font-mono);
   font-size: 12.5px;
@@ -1060,6 +1070,29 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+.source-card-link {
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.source-card-link:hover {
+  background: rgba(56, 189, 248, 0.08);
+  border-color: rgba(56, 189, 248, 0.4);
+  transform: translateY(-1px);
+}
+
+.source-external-icon {
+  margin-left: 2px;
+  opacity: 0.6;
+  color: var(--accent-cyan);
+  transition: opacity 0.2s ease;
+}
+
+.source-card-link:hover .source-external-icon {
+  opacity: 1;
 }
 
 /* ── Thinking / Loading State ──────────────────────────────────────────── */

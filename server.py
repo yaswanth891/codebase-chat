@@ -265,6 +265,14 @@ class QueryResponse(BaseModel):
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
+@app.get("/")
+def root():
+    return {
+        "name": "Codebase Chat API",
+        "status": "running",
+        "docs": "/docs"
+    }
+
 @app.get("/health")
 def health():
     return {"status": "running"}
@@ -404,9 +412,20 @@ def api_query_session(session_id: str, request: QueryRequest, user: dict = Depen
     except Exception as e:
         raise_http_error(e)
 
-    distances, indices = store["index"].search(q_embedding, k=3)
+    k = min(3, len(store["chunks"]))
+    if k == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="No indexed functions available for this repository."
+        )
 
-    relevant_chunks = [store["chunks"][i] for i in indices[0]]
+    distances, indices = store["index"].search(q_embedding, k=k)
+
+    relevant_chunks = [
+        store["chunks"][i]
+        for i in indices[0]
+        if 0 <= i < len(store["chunks"])
+    ]
     context = ""
     for chunk in relevant_chunks:
         context += f"\n--- {chunk['file']} (lines {chunk['start_line']}-{chunk['end_line']}) ---\n"
@@ -448,8 +467,10 @@ Answer:"""
         for chunk in relevant_chunks
     ]
 
+    answer_text = response.text or "I could not generate an answer based on the retrieved code."
+
     # Save user message and bot response to database
     add_message(session_id, "user", request.question)
-    add_message(session_id, "bot", response.text, [dict(s) for s in sources])
+    add_message(session_id, "bot", answer_text, [dict(s) for s in sources])
 
-    return QueryResponse(answer=response.text, sources=sources)
+    return QueryResponse(answer=answer_text, sources=sources)

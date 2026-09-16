@@ -98,7 +98,7 @@ Answer:"""
     # Step 4: Show citations
     print("\nSources:")
     for chunk in relevant_chunks:
-        print(f"  → {chunk['file']} :: {chunk['function_name']}() line {chunk['start_line']}")
+        print(f"  -> {chunk['file']} :: {chunk['function_name']}() line {chunk['start_line']}")
     print("-" * 50)
 
 

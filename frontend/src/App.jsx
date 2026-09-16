@@ -84,8 +84,8 @@ function FormattedInline({ text }) {
             </em>
           );
         }
-        // Clean any stray asterisk that wasn't paired
-        const cleaned = part.content.replace(/\*{1,3}/g, "");
+        // Clean stray edge asterisks from unclosed markdown tokens while preserving *args/**kwargs
+        const cleaned = part.content.replace(/(^\*{1,2}(?!\w)|(?<!\w)\*{1,2}$)/g, "");
         return <span key={idx}>{cleaned}</span>;
       })}
     </>
@@ -231,6 +231,17 @@ function FormattedMessage({ text }) {
             return;
           }
 
+          // Blockquote check: > quote
+          if (trimmed.startsWith("> ")) {
+            flushList(`quote-${lineIdx}`);
+            renderedElements.push(
+              <blockquote key={`quote-${lineIdx}`} className="message-blockquote">
+                <FormattedInline text={trimmed.slice(2)} />
+              </blockquote>
+            );
+            return;
+          }
+
           // Unordered list item check: * item or - item or + item
           const ulMatch = trimmed.match(/^[-*+]\s+(.+)/);
           if (ulMatch) {
@@ -301,6 +312,18 @@ export default function App() {
     loadSessions();
   }, []);
 
+  // Global Keyboard Shortcut: Cmd/Ctrl + N for new session
+  useEffect(() => {
+    function handleGlobalKeyDown(e) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        handleNewChat();
+      }
+    }
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => window.removeEventListener("keydown", handleGlobalKeyDown);
+  }, []);
+
   async function loadSessions() {
     try {
       const res = await axios.get(`${API}/sessions`);
@@ -327,6 +350,7 @@ export default function App() {
     setIndexError("");
 
     const session = sessionsList.find((s) => s.id === sessionId);
+    setGithubUrl(session?.repo_url || "");
     if (session && session.repo_name) {
       setIndexInfo({
         repo: session.repo_name,
@@ -824,22 +848,54 @@ export default function App() {
                             <span>Referenced Source Chunks ({msg.sources.length})</span>
                           </div>
                           <div className="sources-grid">
-                            {msg.sources.map((src, j) => (
-                              <div key={j} className="source-card" title={src.file}>
-                                <div className="source-file-row">
-                                  <span className="source-icon">📄</span>
-                                  <span className="source-file-name">
-                                    {src.file.split("/").pop()}
-                                  </span>
-                                  <span className="source-line-tag">
-                                    line {src.start_line}
-                                  </span>
+                            {msg.sources.map((src, j) => {
+                              const cleanFileName = src.file.split(/[/\\]/).pop();
+                              const cleanRepoUrl = activeSession?.repo_url?.replace(/\.git$/, "").replace(/\/$/, "");
+                              const githubFileLineUrl = cleanRepoUrl
+                                ? `${cleanRepoUrl}/blob/main/${src.file.replace(/\\/g, "/")}#L${src.start_line}`
+                                : null;
+
+                              const cardContent = (
+                                <>
+                                  <div className="source-file-row">
+                                    <span className="source-icon">📄</span>
+                                    <span className="source-file-name" title={src.file}>
+                                      {cleanFileName}
+                                    </span>
+                                    <span className="source-line-tag">
+                                      line {src.start_line}
+                                    </span>
+                                    {githubFileLineUrl && (
+                                      <svg className="source-external-icon" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                                        <polyline points="15 3 21 3 21 9" />
+                                        <line x1="10" y1="14" x2="21" y2="3" />
+                                      </svg>
+                                    )}
+                                  </div>
+                                  <div className="source-func-name">
+                                    <code>{src.function_name}()</code>
+                                  </div>
+                                </>
+                              );
+
+                              return githubFileLineUrl ? (
+                                <a
+                                  key={j}
+                                  href={githubFileLineUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="source-card source-card-link"
+                                  title={`Open ${src.file} line ${src.start_line} on GitHub`}
+                                >
+                                  {cardContent}
+                                </a>
+                              ) : (
+                                <div key={j} className="source-card" title={src.file}>
+                                  {cardContent}
                                 </div>
-                                <div className="source-func-name">
-                                  <code>{src.function_name}()</code>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
                       )}
