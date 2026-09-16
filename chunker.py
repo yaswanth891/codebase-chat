@@ -38,23 +38,36 @@ def chunk_python_file(filepath):
     return chunks
 
 
+EXCLUDED_DIRS = {
+    'venv', '.venv', 'env', 'node_modules', '__pycache__',
+    'dist', 'build', '.git', '.tox', '.pytest_cache',
+    '.mypy_cache', 'site-packages'
+}
+
 def chunk_repository(repo_path):
     """
     Walks an entire folder, chunks every .py file it finds.
-    Returns all chunks combined.
+    Returns all chunks combined with normalized relative file paths.
     """
     all_chunks = []
 
     for root, dirs, files in os.walk(repo_path):
-        # Skip hidden folders like .git
-        dirs[:] = [d for d in dirs if not d.startswith('.')]
+        # Skip hidden folders and common non-source directories
+        dirs[:] = [
+            d for d in dirs
+            if not d.startswith('.') and d not in EXCLUDED_DIRS
+        ]
 
         for file in files:
             if file.endswith('.py'):
                 filepath = os.path.join(root, file)
                 chunks = chunk_python_file(filepath)
+                # Store relative forward-slash path so context and citations are clean
+                rel_path = os.path.relpath(filepath, repo_path).replace("\\", "/")
+                for chunk in chunks:
+                    chunk["file"] = rel_path
                 all_chunks.extend(chunks)
-                print(f"  Chunked {filepath} → {len(chunks)} functions")
+                print(f"  Chunked {rel_path} -> {len(chunks)} functions")
 
     return all_chunks
 
@@ -71,6 +84,6 @@ if __name__ == "__main__":
     for chunk in chunks:
         print(f"\nFunction: {chunk['function_name']}")
         print(f"File: {chunk['file']}")
-        print(f"Lines: {chunk['start_line']} → {chunk['end_line']}")
+        print(f"Lines: {chunk['start_line']} -> {chunk['end_line']}")
         print(f"Code:\n{chunk['text']}")
         print("-" * 40)

@@ -8,12 +8,14 @@ DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "chat
 def get_db():
     # Ensure the directory exists
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=15.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
 def init_db():
     conn = get_db()
+    conn.execute("PRAGMA journal_mode = WAL;")
     cursor = conn.cursor()
     
     # Create users table
